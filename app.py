@@ -1,14 +1,9 @@
-from fastapi import FastAPI, HTTPException, Depends, Request, status
-from pydantic import BaseModel, EmailStr
-from typing import List, Optional
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-import jwt
-from datetime import datetime, timedelta
-from functools import wraps
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.exc import IntegrityError
 
 # Database connection setup
 DATABASE_URL = "mysql+mysqlconnector://root:password@localhost:3306/book_management"
@@ -23,94 +18,149 @@ def get_db():
     finally:
         db.close()
 
-# Initialize FastAPI application
-app = FastAPI()
-
-# Add CORS middleware to allow cross-origin requests
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow requests from any origin
-    allow_credentials=True,
-    allow_methods=["*"],  # Allow all HTTP methods
-    allow_headers=["*"],  # Allow all headers
-)
-
-# Define JWT secret key and algorithm for token encoding/decoding
-SECRET_KEY = "your_secret_key"
-ALGORITHM = "HS256"
-
-# Function to authenticate a user using JWT token
-def authenticate_user(user_id: int, token: str):
-    try:
-        # Decode the JWT token to validate its payload
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        if payload["user_id"] != user_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized access.")
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired.")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token.")
-
-# Pydantic model for user data validation
-class User(BaseModel):
-    id: int
-    name: str
-    username: str
-    password: str
-    email: EmailStr  # Validate email format
-
-# SQLAlchemy model for database User table
-class DBUser(Base):
-    __tablename__ = "users"
+# Define Book table
+class Book(Base):
+    __tablename__ = "books"
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), nullable=False)
-    username = Column(String(255), unique=True, nullable=False)
-    password = Column(String(255), nullable=False)
-    email = Column(String(255), unique=True, nullable=False)
-
-# Pydantic model for inventory item data validation
-class Item(BaseModel):
-    id: int
-    name: str
-    quantity: int
-    capacity: int
-    description: Optional[str] = None  # Optional field for item description
-    price: float
-
-# Endpoint to register a new user
-@app.post("/register")
-def user_register(user: User, db: SessionLocal = Depends(get_db)):
-    # Check if username already exists
-    existing_user = db.query(DBUser).filter(DBUser.username == user.username).first()
-    if existing_user:
-        raise HTTPException(status_code=409, detail=f"Username {user.username} already exists.")
-    new_user = DBUser(
-        id=user.id,
-        name=user.name,
-        username=user.username,
-        password=user.password,
-        email=user.email
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    return {"message": "User registered successfully.", "user": user}
-
-# Endpoint for user login
-@app.post("/login")
-def user_login(username: str, password: str, db: SessionLocal = Depends(get_db)):
-    # Find user by username and password
-    user = db.query(DBUser).filter(DBUser.username == username, DBUser.password == password).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid credentials.")
-
-    # Generate a JWT token for the user
-    token = jwt.encode({
-        "user_id": user.id,
-        "exp": datetime.utcnow() + timedelta(hours=1)  # Token expires in 1 hour
-    }, SECRET_KEY, algorithm=ALGORITHM)
-
-    return {"message": "Login successful.", "token": token}
+    title = Column(String(255), nullable=False)
+    author = Column(String(255), nullable=False)
+    publication_year = Column(Integer, nullable=False)
+    isbn = Column(String(13), unique=True, nullable=False)
+    price = Column(Float, nullable=False)
 
 # Ensure database tables are created
 Base.metadata.create_all(bind=engine)
+
+# Initialize FastAPI application
+app = FastAPI()
+
+# Pydantic model for Book validation
+class BookCreate(BaseModel):
+    title: str
+    author: str
+    publication_year: int
+    isbn: str
+    price: float
+    
+class BookResponse(BaseModel):
+    id: int
+    title: str
+    author: str
+    publication_year: int
+    isbn: str
+    price: float
+
+    class Config:
+        orm_mode = True  # This allows compatibility with SQLAlchemy models
+
+
+# Endpoints for Book Management
+
+# @app.post("/books/", response_model=dict)
+# def create_book(book: BookCreate, db: SessionLocal = Depends(get_db)):
+#     new_book = Book(
+#         title=book.title,
+#         author=book.author,
+#         publication_year=book.publication_year,
+#         isbn=book.isbn,
+#         price=book.price
+#     )
+#     db.add(new_book)
+#     db.commit()
+#     db.refresh(new_book)
+#     return {"message": "Book created successfully.", "book": {
+#         "id": new_book.id,
+#         "title": new_book.title,
+#         "author": new_book.author,
+#         "publication_year": new_book.publication_year,
+#         "isbn": new_book.isbn,
+#         "price": new_book.price
+#     }}
+
+
+@app.post("/books/", response_model=dict)
+def create_book(book: BookCreate, db: SessionLocal = Depends(get_db)):
+    new_book = Book(
+        title=book.title,
+        author=book.author,
+        publication_year=book.publication_year,
+        isbn=book.isbn,
+        price=book.price
+    )
+    try:
+        db.add(new_book)
+        db.commit()
+        db.refresh(new_book)
+        # Convert to BookResponse
+        return {"message": "Book created successfully.", "book": BookResponse.from_orm(new_book)}
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Book with this ISBN already exists.")
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+
+@app.get("/books/", response_model=list[BookResponse])
+def list_books(db: SessionLocal = Depends(get_db)):
+    books = db.query(Book).all()
+    return books
+
+
+# @app.get("/books/{book_id}", response_model=dict)
+# def get_book(book_id: int, db: SessionLocal = Depends(get_db)):
+#     book = db.query(Book).filter(Book.id == book_id).first()
+#     if not book:
+#         raise HTTPException(status_code=404, detail="Book not found.")
+#     return {
+#         "id": book.id,
+#         "title": book.title,
+#         "author": book.author,
+#         "publication_year": book.publication_year,
+#         "isbn": book.isbn,
+#         "price": book.price
+#     }
+
+@app.get("/books/{book_id}", response_model=BookResponse)
+def get_book(book_id: int, db: SessionLocal = Depends(get_db)):
+    book = db.query(Book).filter(Book.id == book_id).first()
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found.")
+    return book
+
+@app.get("/", tags=["Root"])
+def read_root():
+    return {"message": "Welcome to the Book Management API. Use /books/ to manage books."}
+
+
+@app.put("/books/{book_id}", response_model=dict)
+def update_book(book_id: int, book: BookCreate, db: SessionLocal = Depends(get_db)):
+    db_book = db.query(Book).filter(Book.id == book_id).first()
+    if not db_book:
+        raise HTTPException(status_code=404, detail="Book not found.")
+    
+    db_book.title = book.title
+    db_book.author = book.author
+    db_book.publication_year = book.publication_year
+    db_book.isbn = book.isbn
+    db_book.price = book.price
+    
+    db.commit()
+    db.refresh(db_book)
+    return {"message": "Book updated successfully.", "book": {
+        "id": db_book.id,
+        "title": db_book.title,
+        "author": db_book.author,
+        "publication_year": db_book.publication_year,
+        "isbn": db_book.isbn,
+        "price": db_book.price
+    }}
+
+@app.delete("/books/{book_id}", response_model=dict)
+def delete_book(book_id: int, db: SessionLocal = Depends(get_db)):
+    db_book = db.query(Book).filter(Book.id == book_id).first()
+    if not db_book:
+        raise HTTPException(status_code=404, detail="Book not found.")
+    db.delete(db_book)
+    db.commit()
+    return {"message": "Book deleted successfully."}
