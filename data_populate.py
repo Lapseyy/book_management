@@ -2,6 +2,7 @@ from database import SessionLocal, Book
 
 def populate_books():
     db = SessionLocal()
+    # This is a list of my favorite books in formation of postman raw 
     books = [
         {"title": "1984", "author": "George Orwell", "publication_year": 1949, "isbn": "1234567890123", "price": 10.99},
         {"title": "To Kill a Mockingbird", "author": "Harper Lee", "publication_year": 1960, "isbn": "1234567890124", "price": 10.99},

@@ -5,12 +5,13 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError
 
-# Database connection setup
+# Database connection setup toi MySQL
 DATABASE_URL = "mysql+mysqlconnector://root:password@localhost:3306/book_management"
 Base = declarative_base()
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+# gets the database
 def get_db():
     db = SessionLocal()
     try:
@@ -42,6 +43,7 @@ class BookCreate(BaseModel):
     isbn: str
     price: float
     
+# Pydantic model created the reponse for CRUD action of Books validations
 class BookResponse(BaseModel):
     id: int
     title: str
@@ -51,33 +53,10 @@ class BookResponse(BaseModel):
     price: float
 
     class Config:
-        orm_mode = True  # This allows compatibility with SQLAlchemy models
+        from_attributes = True  # Replaces orm_mode in Pydantic v2
 
 
-# Endpoints for Book Management
-
-# @app.post("/books/", response_model=dict)
-# def create_book(book: BookCreate, db: SessionLocal = Depends(get_db)):
-#     new_book = Book(
-#         title=book.title,
-#         author=book.author,
-#         publication_year=book.publication_year,
-#         isbn=book.isbn,
-#         price=book.price
-#     )
-#     db.add(new_book)
-#     db.commit()
-#     db.refresh(new_book)
-#     return {"message": "Book created successfully.", "book": {
-#         "id": new_book.id,
-#         "title": new_book.title,
-#         "author": new_book.author,
-#         "publication_year": new_book.publication_year,
-#         "isbn": new_book.isbn,
-#         "price": new_book.price
-#     }}
-
-
+# post the book information
 @app.post("/books/", response_model=dict)
 def create_book(book: BookCreate, db: SessionLocal = Depends(get_db)):
     new_book = Book(
@@ -100,27 +79,13 @@ def create_book(book: BookCreate, db: SessionLocal = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
-
+#Get all the book details in the database
 @app.get("/books/", response_model=list[BookResponse])
 def list_books(db: SessionLocal = Depends(get_db)):
     books = db.query(Book).all()
     return books
 
-
-# @app.get("/books/{book_id}", response_model=dict)
-# def get_book(book_id: int, db: SessionLocal = Depends(get_db)):
-#     book = db.query(Book).filter(Book.id == book_id).first()
-#     if not book:
-#         raise HTTPException(status_code=404, detail="Book not found.")
-#     return {
-#         "id": book.id,
-#         "title": book.title,
-#         "author": book.author,
-#         "publication_year": book.publication_year,
-#         "isbn": book.isbn,
-#         "price": book.price
-#     }
-
+# Get the id of a certain book with its details
 @app.get("/books/{book_id}", response_model=BookResponse)
 def get_book(book_id: int, db: SessionLocal = Depends(get_db)):
     book = db.query(Book).filter(Book.id == book_id).first()
@@ -128,17 +93,18 @@ def get_book(book_id: int, db: SessionLocal = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Book not found.")
     return book
 
+# This is for the web
 @app.get("/", tags=["Root"])
 def read_root():
     return {"message": "Welcome to the Book Management API. Use /books/ to manage books."}
 
-
+# This is to update exisiting content. You have to put all the information on and make sure that it is accurate.
 @app.put("/books/{book_id}", response_model=dict)
 def update_book(book_id: int, book: BookCreate, db: SessionLocal = Depends(get_db)):
     db_book = db.query(Book).filter(Book.id == book_id).first()
     if not db_book:
         raise HTTPException(status_code=404, detail="Book not found.")
-    
+    # calling to db and inserting information
     db_book.title = book.title
     db_book.author = book.author
     db_book.publication_year = book.publication_year
@@ -147,6 +113,7 @@ def update_book(book_id: int, book: BookCreate, db: SessionLocal = Depends(get_d
     
     db.commit()
     db.refresh(db_book)
+    # Returns in the body of what is accompished. 
     return {"message": "Book updated successfully.", "book": {
         "id": db_book.id,
         "title": db_book.title,
@@ -155,7 +122,7 @@ def update_book(book_id: int, book: BookCreate, db: SessionLocal = Depends(get_d
         "isbn": db_book.isbn,
         "price": db_book.price
     }}
-
+# Deletes the book 
 @app.delete("/books/{book_id}", response_model=dict)
 def delete_book(book_id: int, db: SessionLocal = Depends(get_db)):
     db_book = db.query(Book).filter(Book.id == book_id).first()
